@@ -19,7 +19,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
@@ -342,32 +345,38 @@ def read_tile_from_tiff(args: Tuple) -> Tuple[int, int, np.ndarray]:
     return (y_start, x_start, tile)
 
 
-def convert_to_tiled_tiff(tiff_path: str, tile_size: int = 256) -> None:
-    """Convert a non-tiled TIFF to tiled format in place."""
+def convert_to_tiled_tiff(tiff_path: str, dest_path: str, tile_size: int = 256) -> None:
+    """Write a tiled copy of a non-tiled TIFF to dest_path.
+
+    The tiled copy exists only to make the per-tile reads below efficient. It
+    is written beside the run, never over the input: rewriting the source would
+    discard everything except page 0 and drop the file's TIFF tags.
+    """
     with tifffile.TiffFile(tiff_path) as tif:
         page = tif.pages[0]
-        if page.is_tiled:
-            return  # Already tiled
         data = page.asarray()
-        dtype = page.dtype
 
-    # Write tiled version to temp file, then replace
-    temp_path = tiff_path + ".tiled.tmp"
     tifffile.imwrite(
-        temp_path,
+        dest_path,
         data,
         tile=(tile_size, tile_size),
         compression="zstd",
         compressionargs={"level": 3},
     )
 
-    # Replace original with tiled version
-    import os
-    os.replace(temp_path, tiff_path)
 
+def convert_tiffs_to_tiled(
+    tiff_paths: List[str],
+    num_workers: int,
+    tile_size: int = 256,
+) -> Tuple[List[str], int, Optional[str]]:
+    """Make tiled copies of any non-tiled TIFFs in a scratch directory.
 
-def convert_tiffs_to_tiled(tiff_paths: List[str], num_workers: int, tile_size: int = 256) -> int:
-    """Convert all non-tiled TIFFs to tiled format in parallel. Returns count converted."""
+    Returns the paths to read from - the cached copy where one was made, the
+    original otherwise - how many copies were made, and the scratch directory
+    to remove when the caller is done with the paths (None if none was needed).
+    The input files are never modified.
+    """
     # First check which ones need conversion
     non_tiled = []
     for p in tiff_paths:
@@ -376,14 +385,27 @@ def convert_tiffs_to_tiled(tiff_paths: List[str], num_workers: int, tile_size: i
                 non_tiled.append(p)
 
     if not non_tiled:
-        return 0
+        return list(tiff_paths), 0, None
+
+    cache_dir = tempfile.mkdtemp(prefix="tifs_to_ome_zarr_tiled_")
+
+    # Cache names are positional so two inputs with the same basename in
+    # different folders cannot collide.
+    index = {p: i for i, p in enumerate(tiff_paths)}
+    cached = {
+        p: os.path.join(cache_dir, f"{index[p]:08d}_{os.path.basename(p)}")
+        for p in non_tiled
+    }
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(convert_to_tiled_tiff, p, tile_size) for p in non_tiled]
+        futures = [
+            executor.submit(convert_to_tiled_tiff, p, cached[p], tile_size)
+            for p in non_tiled
+        ]
         for future in tqdm(as_completed(futures), total=len(futures), desc="Converting to tiled"):
             future.result()
 
-    return len(non_tiled)
+    return [cached.get(p, p) for p in tiff_paths], len(non_tiled), cache_dir
 
 
 def scan_tiff_minmax(tiff_path: str) -> Tuple[float, float]:
@@ -676,13 +698,19 @@ def convert_tifs_to_ome_zarr(
     height, width = shape_2d
     logger.info(f"TIFF shape: {shape_2d}, dtype: {dtype}, tiled: {is_tiled}, tile_shape: {tile_shape}")
 
-    # Convert any non-tiled TIFFs to tiled format for efficient random access
+    # Make tiled copies of any non-tiled TIFFs for efficient random access.
+    # The copies live in a scratch directory; the input files are not touched.
     logger.info("Checking all TIFFs for tiled format...")
-    num_converted = convert_tiffs_to_tiled(tiff_path_strs, num_workers)
+    tiff_path_strs, num_converted, tiled_cache_dir = convert_tiffs_to_tiled(
+        tiff_path_strs, num_workers
+    )
     if num_converted > 0:
-        logger.info(f"Converted {num_converted} non-tiled TIFFs to tiled format")
-        # Re-read info after conversion
-        _, _, is_tiled, tile_shape = get_tiff_info(tiff_paths[0])
+        logger.info(
+            f"Made tiled working copies of {num_converted} non-tiled TIFFs "
+            f"in {tiled_cache_dir} (inputs unmodified)"
+        )
+        # Re-read info from the copy we will actually read
+        _, _, is_tiled, tile_shape = get_tiff_info(Path(tiff_path_strs[0]))
         logger.info(f"Now tiled: {is_tiled}, tile_shape: {tile_shape}")
     else:
         logger.info("All TIFFs already tiled")
@@ -723,7 +751,6 @@ def convert_tifs_to_ome_zarr(
     # Create output zarr
     logger.info(f"Creating OME-Zarr at {output_path}")
     if output_path.exists():
-        import shutil
         logger.warning(f"Removing existing {output_path}")
         shutil.rmtree(output_path)
 
@@ -789,6 +816,10 @@ def convert_tifs_to_ome_zarr(
         _global_zarr_arr = None
 
     logger.info("Level 0 complete")
+
+    # The tiled working copies are no longer read after this point.
+    if tiled_cache_dir is not None:
+        shutil.rmtree(tiled_cache_dir, ignore_errors=True)
 
     # Generate pyramid levels
     if num_levels > 1:
