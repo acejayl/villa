@@ -79,6 +79,18 @@ def main():
                 f"Error: --inplace only supported for recompress, zero-range tasks, not {args.task}"
             )
     else:
+        # zero-range only ever rewrites its input. Accepting an output path
+        # here silently destroyed the input instead of writing the output: the
+        # task ignores config.output_zarr, and the overwrite prompt below
+        # guards the output path, so nothing warned about the path actually
+        # being modified.
+        if args.task == "zero-range" and args.output_zarr is not None:
+            raise SystemExit(
+                "Error: zero-range modifies the input zarr in place and does not write "
+                "to an output path. Re-run without the output path, adding --inplace to "
+                "confirm the input will be modified."
+            )
+
         # Check if task requires output_zarr
         if args.task not in ("export-tifs", "zero-range"):
             if args.output_zarr is None:
