@@ -197,13 +197,30 @@ def prepare_prediction(path: Path) -> PreparedPrediction:
     return PreparedPrediction(path=path, array=memmap_array, cleanup_path=cleanup_path)
 
 
-def cleanup_prepared_predictions(predictions: Sequence[PreparedPrediction]) -> None:
-    for prepared in predictions:
+def close_memmap(array: object) -> None:
+    """Release a memmap's file handle so the backing file can be deleted.
+
+    Flushing is not enough: while the mapping is open Windows locks the file
+    and unlink() raises PermissionError [WinError 32]. POSIX allows unlinking a
+    mapped file, which is why this only ever showed up off CI.
+    """
+    if not isinstance(array, np.memmap):
+        return
+    try:
+        array.flush()
+    except Exception:
+        pass
+    mmap = getattr(array, "_mmap", None)
+    if mmap is not None:
         try:
-            if isinstance(prepared.array, np.memmap):
-                prepared.array.flush()
+            mmap.close()
         except Exception:
             pass
+
+
+def cleanup_prepared_predictions(predictions: Sequence[PreparedPrediction]) -> None:
+    for prepared in predictions:
+        close_memmap(prepared.array)
         if prepared.cleanup_path is None:
             continue
         try:
@@ -373,12 +390,14 @@ def merge_prediction_files(files: Sequence[Path], output_path: Path, *, merge_me
         publish_staged_output(staged_output_path, output_path)
         staged_output_path = None
     finally:
-        if output_array is not None:
-            try:
-                output_array.flush()
-            except Exception:
-                pass
+        # Close before unlinking, not just flush - see close_memmap().
+        close_memmap(output_array)
         cleanup_prepared_predictions(prepared_predictions)
+        # Reading a memmap whose mapping has been closed is an access
+        # violation, not an exception, so drop the references here rather than
+        # leave dead arrays reachable from this frame's locals.
+        output_array = None
+        prepared_predictions.clear()
         if output_memmap_path is not None:
             try:
                 output_memmap_path.unlink(missing_ok=True)
