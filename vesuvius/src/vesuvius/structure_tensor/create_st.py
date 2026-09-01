@@ -855,7 +855,9 @@ def main():
     parser.add_argument('--eigen-input', type=str, default=None,
                         help='Input path for eigenanalysis (6-channel structure tensor zarr)')
     parser.add_argument('--eigen-output', type=str, default=None,
-                        help='Output path for eigenvectors')
+                        help='Deprecated and non-functional. Eigenanalysis writes '
+                             'its outputs into the --eigen-input store; there is '
+                             'no separate output path.')
     parser.add_argument('--chunk-size', type=str, default=None,
                         help='Chunk size for eigenanalysis, comma-separated (e.g., "64,64,64")')
     parser.add_argument('--swap-eigenvectors', action='store_true',
@@ -1012,7 +1014,17 @@ def main():
         if not args.eigen_input:
             print("Error: --eigen-input must be provided for eigenanalysis mode")
             return 1
-            
+        if args.eigen_output:
+            # This flag has never been wired to anything.
+            # _finalize_structure_tensor_torch takes only zarr_path and writes
+            # first_component/, second_component/, normal/, confidence/ and the
+            # optional eigenvectors/eigenvalues into that same store. Passing
+            # --eigen-output silently wrote them into --eigen-input instead, so
+            # say so rather than appearing to honour it.
+            print("Error: --eigen-output is not supported. Eigenanalysis writes "
+                  "into the --eigen-input store.")
+            return 1
+
         print("\n--- Running Eigenanalysis ---")
         print(f"Input zarr: {args.eigen_input}")
         try:
