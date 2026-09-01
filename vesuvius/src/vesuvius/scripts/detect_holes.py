@@ -114,6 +114,23 @@ def _suffix_from_glob(pattern: str) -> str:
     return s if s else "label"
 
 
+def resolve_hole_mask_name(hole_mask_suffix: Optional[str],
+                           hole_mask_name: Optional[str],
+                           label_glob: str) -> str:
+    """Pick the output filename for a --subfolders run.
+
+    An explicit --hole-mask-suffix wins, then an explicit --hole-mask-name,
+    then a suffix derived from --label-glob. Deriving the suffix before this
+    check made it always truthy - _suffix_from_glob falls back to "label"
+    rather than returning empty - so --hole-mask-name was never read.
+    """
+    if hole_mask_suffix:
+        return f"hole_mask_{hole_mask_suffix}.tif"
+    if hole_mask_name:
+        return hole_mask_name
+    return f"hole_mask_{_suffix_from_glob(str(label_glob))}.tif"
+
+
 def load_tif_3d(path: Path, allow_2d: bool = False) -> np.ndarray:
     arr = tiff.imread(str(path))
     arr = np.asarray(arr)
@@ -520,8 +537,10 @@ def parse_args() -> argparse.Namespace:
                     help="Treat --in-dir as a root of per-sample subfolders.")
     ap.add_argument("--label-glob", type=str, default="*_surf.tif",
                     help="Glob for label file inside each subfolder (used with --subfolders).")
-    ap.add_argument("--hole-mask-name", type=str, default="hole_mask.tif",
-                    help="Output hole mask filename (used with --subfolders).")
+    ap.add_argument("--hole-mask-name", type=str, default=None,
+                    help="Output hole mask filename (used with --subfolders). "
+                         "Overridden by --hole-mask-suffix. When neither is "
+                         "given the suffix is derived from --label-glob.")
     ap.add_argument("--hole-mask-suffix", type=str, default=None,
                     help="If set, output hole mask as hole_mask_<suffix>.tif (used with --subfolders).")
     ap.add_argument("--overwrite-hole-mask", action="store_true",
@@ -578,10 +597,8 @@ def main() -> None:
             return
         out_dir = args.out_dir / sample_dir.name if args.out_dir is not None else sample_dir
         out_dir.mkdir(parents=True, exist_ok=True)
-        if args.hole_mask_suffix:
-            out_name = f"hole_mask_{args.hole_mask_suffix}.tif"
-        else:
-            out_name = args.hole_mask_name
+        out_name = resolve_hole_mask_name(
+            args.hole_mask_suffix, args.hole_mask_name, args.label_glob)
         out_path = out_dir / out_name
         if out_path.exists() and not args.overwrite_hole_mask:
             print(f"[WARN] Hole mask exists, skipping write: {out_path}")
@@ -590,9 +607,9 @@ def main() -> None:
         print(f"[OK] Saved hole output to {out_path}")
 
     if args.subfolders:
-        if args.hole_mask_suffix is None:
-            args.hole_mask_suffix = _suffix_from_glob(str(args.label_glob))
-            print(f"[INFO] Using hole mask suffix from label glob: {args.hole_mask_suffix}")
+        if args.hole_mask_suffix is None and args.hole_mask_name is None:
+            print("[INFO] Using hole mask suffix from label glob: "
+                  f"{_suffix_from_glob(str(args.label_glob))}")
         sample_dirs = list_subfolders(args.in_dir)
         if not sample_dirs:
             print("No subfolders found.")
