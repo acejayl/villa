@@ -31,6 +31,7 @@ from vesuvius.ink_detection.data.geometry import (
 )
 from vesuvius.ink_detection.data.normalization import normalize_image
 from vesuvius.ink_detection.inference.inference_runtime import (
+    MIN_BLEND_WEIGHT,
     TargetModel,
     flip_spatial,
     iter_mirror_axes,
@@ -500,7 +501,11 @@ def create_importance_map(
         axes.append(np.exp(-0.5 * (coordinate / sigma) ** 2).astype(np.float32))
     weight = axes[0][:, None, None] * axes[1][None, :, None] * axes[2][None, None, :]
     weight /= max(float(weight.max()), np.finfo(np.float32).eps)
-    return np.clip(weight, np.finfo(np.float32).eps, None).astype(np.float32)
+    # The floor has to clear the `where=weight > 1e-6` guard in
+    # ChunkAccumulator3D._flush. float32 eps is 1.19e-7, below it, so a voxel
+    # covered only by the faint tail of a single patch kept its un-normalized
+    # weighted sum and truncated to 0 on the way to uint8.
+    return np.clip(weight, MIN_BLEND_WEIGHT, None).astype(np.float32)
 
 
 def tta_variants(enabled: bool) -> list[tuple[int, ...]]:

@@ -15,6 +15,13 @@ from vesuvius.ink_detection.models.input_padding import center_pad_input_depth
 
 LOGGER = logging.getLogger(__name__)
 
+# Smallest weight any patch importance map may produce. It must stay above the
+# `where=weight > 1e-6` guard the accumulators normalize with: below it the
+# guard skips the division, the accumulator keeps its un-normalized weighted
+# sum (~1e-7), and that truncates to 0 on the way to uint8 - so a confident
+# prediction is written out as confident background.
+MIN_BLEND_WEIGHT = 0.001
+
 
 def iter_mirror_axes(allowed_axes: Sequence[int]) -> list[tuple[int, ...]]:
     """Enumerate mirror variants in combination order, including identity."""

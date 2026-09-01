@@ -28,6 +28,7 @@ from vesuvius.ink_detection.models.checkpoint import (
 )
 from vesuvius.ink_detection.config import InkConfig, NormalizationConfig
 from vesuvius.ink_detection.inference.inference_runtime import (
+    MIN_BLEND_WEIGHT,
     TargetModel,
     flip_spatial,
     iter_mirror_axes,
@@ -160,7 +161,7 @@ def compute_importance_map_2d(
         weight /= torch.clamp(weight.max(), min=torch.finfo(weight.dtype).eps)
         # An exact Hann window is zero at its outermost pixels; flooring keeps a
         # boundary covered by only one patch normalizable.
-        return torch.clamp(weight, min=0.001)
+        return torch.clamp(weight, min=MIN_BLEND_WEIGHT)
     if mode != "gaussian":
         raise ValueError(f"Unsupported flat blend mode {mode!r}")
     sigma_y = max(patch_h * float(sigma_scale), 1e-6)
@@ -172,7 +173,12 @@ def compute_importance_map_2d(
         -0.5 * ((grid_y / sigma_y) ** 2 + (grid_x / sigma_x) ** 2)
     )
     weight /= torch.clamp(weight.max(), min=torch.finfo(weight.dtype).eps)
-    return torch.clamp(weight, min=torch.finfo(weight.dtype).eps)
+    # Same reason as the Hann branch, and the floor has to clear the
+    # normalizer's `where=weight > 1e-6` guard. float32 eps is 1.19e-7, which is
+    # below it: where the guard fires the accumulator keeps the un-normalized
+    # weighted sum (~1e-7), which clips and truncates to a uint8 0, so a
+    # confident 0.8 is written out as confident background.
+    return torch.clamp(weight, min=MIN_BLEND_WEIGHT)
 
 
 def resolve_patch_stride(
