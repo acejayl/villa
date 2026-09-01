@@ -44,12 +44,18 @@ def _positive_lround(value: float) -> int:
 
 
 def _surface_coordinate_fingerprint(
-    x: FloatArray, y: FloatArray, z: FloatArray
+    x: FloatArray, y: FloatArray, z: FloatArray, valid: Optional[np.ndarray] = None
 ) -> str:
     """Digest of a strided coordinate sample, identifying a surface.
 
     Shapes alone cannot distinguish two segments, so UV-cache keys include
     this. A 64x64 stride sample keeps the cost negligible for any raster.
+
+    The validity mask is part of the identity, not incidental: the UV field is
+    computed only over valid vertices on both sides, so the same coordinates
+    under a different mask.tif - or with --ignore-tifxyz-mask - produce a
+    different mapping. Its exact popcount is included as well as a sample,
+    because a mask repair can be small enough to fall between strides.
     """
 
     digest = hashlib.sha256()
@@ -62,6 +68,18 @@ def _surface_coordinate_fingerprint(
         digest.update(sample.shape[0].to_bytes(4, "little"))
         digest.update(sample.shape[1].to_bytes(4, "little"))
         digest.update(sample.tobytes())
+
+    if valid is not None:
+        mask = np.asarray(valid, dtype=bool)
+        digest.update(b"valid")
+        digest.update(int(mask.sum()).to_bytes(8, "little"))
+        row_stride = max(1, mask.shape[0] // 64)
+        col_stride = max(1, mask.shape[1] // 64)
+        sample = np.ascontiguousarray(mask[::row_stride, ::col_stride])
+        digest.update(sample.shape[0].to_bytes(4, "little"))
+        digest.update(sample.shape[1].to_bytes(4, "little"))
+        digest.update(sample.tobytes())
+
     return digest.hexdigest()[:16]
 
 
@@ -1502,10 +1520,10 @@ def transfer_array(
             "source_stored_shape": list(source.shape),
             "target_stored_shape": list(target.shape),
             "source_fingerprint": _surface_coordinate_fingerprint(
-                source.x, source.y, source.z
+                source.x, source.y, source.z, source.valid
             ),
             "target_fingerprint": _surface_coordinate_fingerprint(
-                target.x, target.y, target.z
+                target.x, target.y, target.z, target.valid
             ),
             "affine": np.asarray(effective_affine, dtype=np.float64)
             .ravel()
