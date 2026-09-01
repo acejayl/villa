@@ -300,11 +300,17 @@ class CrossFrameZarrDataset(Dataset):
 
     def _scan_url(self, level: int) -> str:
         """URL of the OME-Zarr level used for the FG scan."""
-        base_url = self.labels_zarr_url.rstrip("/")
-        # Strip trailing ``/<digit>`` so ``<base>/0`` -> ``<base>``.
-        last = base_url.rsplit("/", 1)[-1]
-        parent = base_url.rsplit("/", 1)[0] if last.isdigit() else base_url
-        return f"{parent}/{level}"
+        base_url = self.labels_zarr_url.rstrip("/\\")
+        # Strip a trailing ``<sep><digit>`` so ``<base>/0`` -> ``<base>``.
+        # labels_zarr_url is documented and shipped as a plain local path
+        # pointing straight at a level directory, and on Windows that is spelled
+        # with backslashes. Splitting on "/" alone found no separator there, so
+        # the level was appended to the level directory - ``...zarr\0/2`` - and
+        # the scan opened a path that does not exist.
+        cut = max(base_url.rfind("/"), base_url.rfind("\\"))
+        sep = base_url[cut] if cut != -1 else "/"
+        parent = base_url[:cut] if (cut != -1 and base_url[cut + 1:].isdigit()) else base_url
+        return f"{parent}{sep}{level}"
 
     def _compute_scan_factor(self, level: int) -> Tuple[int, int, int]:
         """Probe the scan level once to compute the downsample factor."""
