@@ -267,7 +267,27 @@ def hierarchical_scroll_segment_weights(
     keys: list[tuple[str, str]] = []
     for patch in patches:
         source = config.datasets[patch.segment.dataset_idx]
-        keys.append((source.sampling_scroll, patch.segment.segment_relpath))
+        relpath = patch.segment.segment_relpath
+        # Key on the physical segment, not the representation. segment_relpath
+        # names one rendering of a segment, so keying on it gave a segment with
+        # two renderings two budgets instead of one shared budget - twice the
+        # mass of a segment rendered once, which is what this weighting exists
+        # to prevent. sampling_physical_segment_keys is the same explicit
+        # mapping FixedPriorBatchSampler uses for this.
+        physical_keys = source.sampling_physical_segment_keys
+        if physical_keys:
+            try:
+                segment_key = physical_keys[relpath]
+            except KeyError as exc:
+                raise ValueError(
+                    "patch representation is missing an explicit sampling "
+                    "mapping: dataset_idx="
+                    f"{patch.segment.dataset_idx}, segment_relpath={relpath!r}"
+                ) from exc
+        else:
+            # No mapping declared: every representation is its own segment.
+            segment_key = relpath
+        keys.append((source.sampling_scroll, segment_key))
     patch_counts = Counter(keys)
     segments_by_scroll: dict[str, set[str]] = defaultdict(set)
     for scroll, segment in patch_counts:
