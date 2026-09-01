@@ -2,6 +2,21 @@
 from __future__ import annotations
 import numpy as np
 import zarr
+
+
+_ZARR_V3 = int(zarr.__version__.split(".", 1)[0]) >= 3
+
+
+def _open_group_v2(path):
+    """Open the root group for append, as explicit v2 under either zarr major.
+
+    zarr 3 defaults to the v3 format, which rejects the numcodecs `compressor`
+    the scale arrays are created with, and the OME metadata this writer emits
+    describes a v2 store.
+    """
+    if _ZARR_V3:
+        return zarr.open_group(str(path), mode="a", zarr_format=2)
+    return zarr.open_group(str(path), mode="a")
 from numcodecs import Blosc
 from typing import Optional, Tuple
 
@@ -63,7 +78,7 @@ class OMEU8VectorWriter:
         Xds = (X + self.ds - 1) // self.ds
         self.shape_ds = (Zds, Yds, Xds)
 
-        root = zarr.open_group(output_path, mode="a")
+        root = _open_group_v2(output_path)
         grp = root.require_group(group_name)
         self.ds_z = self._require_scale(grp.require_group("z"), chunks_zyx, compressor)
         self.ds_y = self._require_scale(grp.require_group("y"), chunks_zyx, compressor)
@@ -83,14 +98,21 @@ class OMEU8VectorWriter:
                     f"expected {self.shape_ds}"
                 )
             return ds
+        common = {
+            "shape": self.shape_ds,
+            "chunks": chunks,
+            "dtype": np.uint8,
+            "compressor": compressor,
+        }
+        if _ZARR_V3:
+            # zarr 3 removed Group.create_dataset. create_array takes the same
+            # arguments and accepts `compressor` because the group is opened as
+            # v2 above, which is the format this writer's OME metadata assumes.
+            return g.create_array(
+                self.scale_name, **common,
+                config={"write_empty_chunks": False})
         return g.create_dataset(
-            self.scale_name,
-            shape=self.shape_ds,
-            chunks=chunks,
-            dtype=np.uint8,
-            compressor=compressor,
-            write_empty_chunks=False,
-        )
+            self.scale_name, **common, write_empty_chunks=False)
 
     def _down_bounds(self, z0, z1, y0, y1, x0, x1):
         s = self.ds
