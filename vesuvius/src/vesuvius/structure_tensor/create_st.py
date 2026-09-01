@@ -10,6 +10,31 @@ from typing import Optional, Union
 from tqdm.auto import tqdm
 from torch.utils.data import Dataset, DataLoader
 import zarr
+
+
+_ZARR_V3 = int(zarr.__version__.split(".", 1)[0]) >= 3
+
+
+def _create_array(group, name, *, shape, chunks, dtype, compressor,
+                  overwrite=False):
+    """Create one array inside a group, on zarr 2 or zarr 3.
+
+    Group.create_dataset is a zarr 2 API. zarr 3 replaced it with create_array,
+    which also rejects the numcodecs `compressor` unless the array is v2 - and
+    v2 is the format the OME metadata written alongside these arrays assumes.
+    """
+    common = {
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "compressor": compressor,
+    }
+    if _ZARR_V3:
+        return group.create_array(
+            name, **common, overwrite=overwrite,
+            config={"write_empty_chunks": False})
+    return group.create_dataset(
+        name, **common, overwrite=overwrite, write_empty_chunks=False)
 import numcodecs
 
 from vesuvius.models.run.inference import Inferer
@@ -203,13 +228,13 @@ class StructureTensorInferer(Inferer, nn.Module):
             )
             
             # Create the structure_tensor array within the group
-            self.output_store = root_store.create_dataset(
+            self.output_store = _create_array(
+                root_store,
                 'structure_tensor',
                 shape=output_shape,
                 chunks=output_chunks,
                 dtype=np.float32,
                 compressor=compressor,
-                write_empty_chunks=False
             )
             
             # Store metadata in the root group
@@ -592,9 +617,9 @@ def _finalize_structure_tensor_torch(
         for axg in (gz, gy, gx):
             if ome_scale in axg:
                 del axg[ome_scale]
-            axg.create_dataset(
-                ome_scale, shape=(Zds, Yds, Xds), chunks=out_chunks_ds,
-                dtype=np.uint8, compressor=compressor, write_empty_chunks=False
+            _create_array(
+                axg, ome_scale, shape=(Zds, Yds, Xds), chunks=out_chunks_ds,
+                dtype=np.uint8, compressor=compressor,
             )
         return gz[ome_scale], gy[ome_scale], gx[ome_scale]
 
@@ -606,31 +631,31 @@ def _finalize_structure_tensor_torch(
         conf_group = root_store.require_group("confidence")
         if ome_scale in conf_group:
             del conf_group[ome_scale]
-        conf_ds = conf_group.create_dataset(
-            ome_scale, shape=(Zds, Yds, Xds), chunks=out_chunks_ds,
-            dtype=np.uint8, compressor=compressor, write_empty_chunks=False
+        conf_ds = _create_array(
+            conf_group, ome_scale, shape=(Zds, Yds, Xds), chunks=out_chunks_ds,
+            dtype=np.uint8, compressor=compressor,
         )
 
     # ---- Optional: keep full-precision eigen* arrays (float32) ----
     if keep_eigen:
         out_chunks = (1, cz, cy, cx)
-        eigenvectors_arr = root_store.create_dataset(
+        eigenvectors_arr = _create_array(
+            root_store,
             'eigenvectors',
             shape=(9, Z, Y, X),
             chunks=out_chunks,
             compressor=compressor,
             dtype=np.float32,
-            write_empty_chunks=False,
-            overwrite=True
+            overwrite=True,
         )
-        eigenvalues_arr = root_store.create_dataset(
+        eigenvalues_arr = _create_array(
+            root_store,
             'eigenvalues',
             shape=(3, Z, Y, X),
             chunks=out_chunks,
             compressor=compressor,
             dtype=np.float32,
-            write_empty_chunks=False,
-            overwrite=True
+            overwrite=True,
         )
     
     # build chunk list
