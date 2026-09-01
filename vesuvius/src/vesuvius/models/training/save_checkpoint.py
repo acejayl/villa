@@ -113,19 +113,20 @@ def manage_checkpoint_history(checkpoint_history, best_checkpoints, epoch,
     checkpoint_path = Path(checkpoint_path)
     checkpoint_dir = Path(checkpoint_dir)
     
-    checkpoint_history.append((epoch, str(checkpoint_path)))
-    
-    if epoch in [e for e, _ in checkpoint_history]:
-        ckpt_path = next(p for e, p in checkpoint_history if e == epoch)
-        best_checkpoints.append((validation_loss, epoch, ckpt_path))
-        best_checkpoints.sort(key=lambda x: x[0]) 
-        
-        if len(best_checkpoints) > max_best:
-            _, _, removed_path = best_checkpoints.pop(-1) 
-            if removed_path not in [p for _, p in checkpoint_history]:
-                if Path(removed_path).exists():
-                    Path(removed_path).unlink()
-                    print(f"Removed checkpoint with higher validation loss: {removed_path}")
+    # The caller records this epoch in checkpoint_history before calling. Appending
+    # again here pushed that history - a deque(maxlen=max_recent) - forward by two
+    # entries per epoch, so it never held more than two distinct epochs and the
+    # prune below deleted the third-most-recent checkpoint that max_recent
+    # promises to keep.
+    best_checkpoints.append((validation_loss, epoch, str(checkpoint_path)))
+    best_checkpoints.sort(key=lambda x: x[0])
+
+    if len(best_checkpoints) > max_best:
+        _, _, removed_path = best_checkpoints.pop(-1)
+        if removed_path not in [p for _, p in checkpoint_history]:
+            if Path(removed_path).exists():
+                Path(removed_path).unlink()
+                print(f"Removed checkpoint with higher validation loss: {removed_path}")
     
     all_checkpoints_to_keep = set()
     
@@ -185,19 +186,18 @@ def manage_debug_gifs(debug_gif_history, best_debug_gifs, epoch,
     gif_path = Path(gif_path)
     checkpoint_dir = Path(checkpoint_dir)
     
-    debug_gif_history.append((epoch, str(gif_path)))
-    
-    if epoch in [e for e, _ in debug_gif_history]:
-        gif_path_str = next(p for e, p in debug_gif_history if e == epoch)
-        best_debug_gifs.append((validation_loss, epoch, gif_path_str))
-        best_debug_gifs.sort(key=lambda x: x[0]) 
-        
-        if len(best_debug_gifs) > max_best:
-            _, _, removed_gif = best_debug_gifs.pop(-1)
-            if removed_gif not in [p for _, p in debug_gif_history]:
-                if Path(removed_gif).exists():
-                    Path(removed_gif).unlink()
-                    print(f"Removed debug video with higher validation loss: {removed_gif}")
+    # Same as manage_checkpoint_history: the caller has already recorded this
+    # epoch in debug_gif_history - it is how it knows a video exists to manage -
+    # so appending here only costs a slot in a bounded history.
+    best_debug_gifs.append((validation_loss, epoch, str(gif_path)))
+    best_debug_gifs.sort(key=lambda x: x[0])
+
+    if len(best_debug_gifs) > max_best:
+        _, _, removed_gif = best_debug_gifs.pop(-1)
+        if removed_gif not in [p for _, p in debug_gif_history]:
+            if Path(removed_gif).exists():
+                Path(removed_gif).unlink()
+                print(f"Removed debug video with higher validation loss: {removed_gif}")
     
     all_gifs_to_keep = set()
     
