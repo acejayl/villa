@@ -69,34 +69,60 @@ def _edt_dilate_worker(
 
     z_start, z_end, y_start, y_end, x_start, x_end = chunk_bounds
 
-    # Read input chunk
     input_arr = zarr.open(input_path, mode="r")[resolution]
-    chunk_data = input_arr[z_start:z_end, y_start:y_end, x_start:x_end]
+    shape = input_arr.shape
 
-    # Create binary mask of nonzero values
+    # Read a halo around the block. Dilation reaches `distance` voxels, so a
+    # block read on its own bounds can never be dilated into from a neighbour
+    # and the result is truncated at every block face. One extra voxel keeps
+    # the comparison at exactly `distance` on the safe side of the halo.
+    halo = int(np.ceil(distance)) + 1
+    bounds = ((z_start, z_end), (y_start, y_end), (x_start, x_end))
+    read = tuple(
+        (max(0, lo - halo), min(shape[axis], hi + halo))
+        for axis, (lo, hi) in enumerate(bounds)
+    )
+
+    chunk_data = input_arr[
+        read[0][0]:read[0][1], read[1][0]:read[1][1], read[2][0]:read[2][1]
+    ]
     mask = chunk_data != 0
 
-    # Skip if chunk is all background (empty)
+    # Materialise the volume boundary instead of leaving it to the EDT's own
+    # border handling. black_border applies to the array actually passed to
+    # edt(), which is the *inverted* mask, so black_border=True told edt that
+    # everything outside the block was foreground and every block face grew a
+    # false halo of "dilated" background. Padding here means the flag keeps its
+    # intended meaning - what lies outside the whole volume - and the EDT is
+    # then always computed with black_border=False.
+    pad = [
+        (max(0, halo - (lo - read[axis][0])), max(0, halo - (read[axis][1] - hi)))
+        for axis, (lo, hi) in enumerate(bounds)
+    ]
+    if any(before or after for before, after in pad):
+        mask = np.pad(mask, pad, mode="constant", constant_values=bool(black_border))
+
+    # Nothing to dilate from, anywhere in reach of this block.
     if not mask.any():
         return (chunk_idx, False)
 
-    # Invert mask for EDT (EDT computes distance from True voxels)
     inverted = ~mask
-
-    # Compute EDT
     if HAS_EDT:
-        # Ensure contiguity for edt package
         if not inverted.flags["C_CONTIGUOUS"]:
             inverted = np.ascontiguousarray(inverted)
         # Use single thread since we parallelize over chunks
-        distances = edt_package.edt(inverted, parallel=1, black_border=black_border)
+        distances = edt_package.edt(inverted, parallel=1, black_border=False)
     else:
         distances = scipy_edt(inverted)
 
-    # Threshold to create dilated mask
     dilated = (distances <= distance).astype(np.uint8)
 
-    # Write to output
+    # Trim the halo back off before writing the block's own region.
+    interior = tuple(
+        slice(halo, halo + (hi - lo)) for (lo, hi) in bounds
+    )
+    dilated = dilated[interior]
+
     output_arr = zarr.open(output_path, mode="r+")[resolution]
     output_arr[z_start:z_end, y_start:y_end, x_start:x_end] = dilated
 
