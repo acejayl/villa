@@ -335,6 +335,20 @@ def build_pyramid(
                 pass
 
 
+def open_input_level(path: str, level=None) -> zarr.Array:
+    """Open a zarr input for reading, resolving the level if it is a group.
+
+    Workers re-open the input by path in a separate process, so they need the
+    same OME-Zarr handling as ZarrTask._get_input_array. Opening the root path
+    of an OME-Zarr returns a Group, and every array operation on a Group fails:
+    indexing raises KeyError and .ndim/.shape raise AttributeError.
+    """
+    opened = zarr.open(path, mode="r")
+    if isinstance(opened, zarr.Group):
+        return opened[str(level) if level is not None else "0"]
+    return opened
+
+
 def inverse_permutation(perm: List[int]) -> List[int]:
     """Compute the inverse of a permutation.
 

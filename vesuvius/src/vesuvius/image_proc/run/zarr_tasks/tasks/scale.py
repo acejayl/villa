@@ -19,6 +19,7 @@ from ..utils import (
     build_pyramid,
     create_level_dataset,
     get_chunk_coords,
+    open_input_level,
     write_multiscales_metadata,
 )
 
@@ -33,8 +34,8 @@ class ScaleConfig(TaskConfig):
 
 def _scale_worker(args: Tuple) -> Tuple[Tuple[int, int], ...]:
     """Multiprocessing worker for scaling chunks."""
-    input_path, output_path, scale, out_chunk_coords = args
-    in_z = zarr.open(input_path, mode="r")
+    input_path, output_path, scale, level, out_chunk_coords = args
+    in_z = open_input_level(input_path, level)
     out_z = zarr.open(output_path, mode="r+")
 
     out_slices = tuple(slice(start, stop) for start, stop in out_chunk_coords)
@@ -161,6 +162,7 @@ class ScaleTask(ZarrTask):
                 self.config.input_zarr,
                 self._lvl0_path,
                 self.config.scale_factor,
+                self.config.level,
                 coords,
             )
 

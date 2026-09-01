@@ -19,6 +19,7 @@ from ..utils import (
     build_pyramid,
     create_level_dataset,
     get_chunk_coords,
+    open_input_level,
     write_multiscales_metadata,
 )
 
@@ -34,8 +35,8 @@ class ThresholdConfig(TaskConfig):
 
 def _threshold_worker(args: Tuple) -> Tuple[Tuple[int, int], ...]:
     """Multiprocessing worker for thresholding chunks."""
-    input_path, output_path, threshold, erase_blank, chunk_coords = args
-    input_z = zarr.open(input_path, mode="r")
+    input_path, output_path, threshold, erase_blank, level, chunk_coords = args
+    input_z = open_input_level(input_path, level)
     output_z = zarr.open(output_path, mode="r+")
 
     slices = tuple(slice(start, stop) for start, stop in chunk_coords)
@@ -137,6 +138,7 @@ class ThresholdTask(ZarrTask):
                 self._lvl0_path,
                 self.config.threshold,
                 self.config.erase_blank,
+                self.config.level,
                 coords,
             )
 

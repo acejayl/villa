@@ -19,6 +19,7 @@ from ..utils import (
     build_pyramid,
     create_level_dataset,
     get_chunk_coords,
+    open_input_level,
     inverse_permutation,
     write_multiscales_metadata,
 )
@@ -34,8 +35,8 @@ class TransposeConfig(TaskConfig):
 
 def _transpose_worker(args: Tuple) -> Tuple[Tuple[int, int], ...]:
     """Multiprocessing worker for transposing chunks."""
-    input_path, output_path, perm, out_chunk_coords = args
-    in_z = zarr.open(input_path, mode="r")
+    input_path, output_path, perm, level, out_chunk_coords = args
+    in_z = open_input_level(input_path, level)
     out_z = zarr.open(output_path, mode="r+")
 
     out_slices = tuple(slice(start, stop) for start, stop in out_chunk_coords)
@@ -158,6 +159,7 @@ class TransposeTask(ZarrTask):
                 self.config.input_zarr,
                 self._lvl0_path,
                 self._perm,
+                self.config.level,
                 coords,
             )
 
