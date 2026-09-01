@@ -28,11 +28,34 @@ from typing import List, Optional, Tuple
 import numpy as np
 import tifffile
 import zarr
+
+from vesuvius.label_zarr import open_v2_group
 from numcodecs import Blosc
 from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+_ZARR_V3 = int(zarr.__version__.split(".", 1)[0]) >= 3
+
+
+def _create_level(root, name, *, shape, chunks, dtype, compressor,
+                  overwrite=False):
+    """Create one pyramid level, on zarr 2 or zarr 3.
+
+    Group.create_dataset is zarr 2 only. zarr 3 replaced it with create_array,
+    and rejects `compressor` unless the array is explicitly zarr_format 2 -
+    which is the format the .zattrs written below describes.
+    """
+    common = {
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "compressor": compressor,
+    }
+    if _ZARR_V3:
+        return root.create_array(name, **common, overwrite=True)
+    return root.create_dataset(name, **common, overwrite=overwrite)
 
 
 def parse_chunk_size(value: str) -> Tuple[int, int, int]:
@@ -552,7 +575,8 @@ def generate_pyramid_levels(
         logger.info(f"Level {level}: {prev_shape} -> {out_shape}")
 
         # Create output array
-        out_arr = root.create_dataset(
+        out_arr = _create_level(
+            root,
             str(level),
             shape=out_shape,
             chunks=chunks,
@@ -703,10 +727,11 @@ def convert_tifs_to_ome_zarr(
         logger.warning(f"Removing existing {output_path}")
         shutil.rmtree(output_path)
 
-    root = zarr.open(str(output_path), mode="w")
+    root = open_v2_group(output_path)
 
     # Create level 0 array
-    arr_0 = root.create_dataset(
+    arr_0 = _create_level(
+        root,
         "0",
         shape=volume_shape,
         chunks=chunk_shape,
