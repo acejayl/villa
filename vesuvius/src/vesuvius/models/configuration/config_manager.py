@@ -32,6 +32,10 @@ class ConfigManager:
         self.tr_configs = config.get("tr_config", {})
         self.model_config = config.get("model_config", {}) 
         self.dataset_config = config.get("dataset_config", {})
+        # _init_attributes reads this off self, so it has to be loaded here with
+        # the other sections. Without it the getattr fell back to {} on every
+        # run and EMA could not be turned on from a config file at all.
+        self.ema_config = config.get("ema", {}) or {}
 
         data_path_cfg = self.dataset_config.get("data_path")
         if data_path_cfg is None:
@@ -927,6 +931,9 @@ class ConfigManager:
             "model_config": model_config,
             "dataset_config": dataset_config,
             "inference_config": inference_config,
+            # Saved under "ema" because that is the key inference reads it back
+            # from - see _legacy_checkpoint_uses_ema_for_inference.
+            "ema": deepcopy(self.ema_config),
         }
 
         return combined_config
