@@ -255,7 +255,7 @@ class StructureTensorInferer(Inferer, nn.Module):
         """
         Skip model loading entirely, just build dataset, stores, then process.
         """
-        if self.verbose: print("Preparing dataset & output stores for structure‐tensor...")
+        if self.verbose: print("Preparing dataset & output stores for structure-tensor...")
         # load_model is a no‐op now
         self.model = self._load_model()
         # dataset + dataloader
@@ -807,8 +807,8 @@ def _finalize_structure_tensor_torch(
     if verbose and ome_out:
         print(f"[OME] wrote first_component/ second_component/ normal/ and confidence/ at scale='{ome_scale}', downsample={ds_factor}")
     if verbose and keep_eigen:
-        print(f"[Eigen] eigenvectors → {zarr_path}/eigenvectors")
-        print(f"[Eigen] eigenvalues  → {zarr_path}/eigenvalues")
+        print(f"[Eigen] eigenvectors -> {zarr_path}/eigenvectors")
+        print(f"[Eigen] eigenvalues  -> {zarr_path}/eigenvalues")
 
 
 def main():

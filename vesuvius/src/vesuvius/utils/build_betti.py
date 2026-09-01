@@ -71,9 +71,9 @@ def build_betti_matching():
         if (build_dir / "betti_matching.so").exists() or \
            (build_dir / "betti_matching.cpython-*.so").exists() or \
            list(build_dir.glob("betti_matching*.so")):
-            print("✓ Found betti_matching module")
+            print("Found betti_matching module")
         else:
-            print("⚠ Warning: Could not find betti_matching.so in build directory")
+            print("Warning: Could not find betti_matching.so in build directory")
             print("Contents of build directory:")
             for f in build_dir.iterdir():
                 print(f"  - {f.name}")

@@ -161,6 +161,6 @@ class VectorFieldComputer:
         if writer is not None:
             writer.close()
         if not ome_only:
-            print(f"✔ chunked U, V, N written to {output_zarr}")
+            print(f"chunked U, V, N written to {output_zarr}")
         if writer is not None:
-            print(f"✔ OME-ish uint8 written under '{group_name}/{{z,y,x}}/{output_ome_scale}' in {output_zarr}")
+            print(f"OME-ish uint8 written under '{group_name}/{{z,y,x}}/{output_ome_scale}' in {output_zarr}")

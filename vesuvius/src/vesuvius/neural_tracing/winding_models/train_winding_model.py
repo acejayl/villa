@@ -419,7 +419,12 @@ def make_dataloader(dataset, config, *, generator, num_workers):
     if num_workers > 0:
         kwargs["persistent_workers"] = bool(config.get("persistent_workers", True))
         kwargs["prefetch_factor"] = max(1, int(config.get("prefetch_factor", 2)))
-        kwargs["multiprocessing_context"] = "fork"
+        # "fork" is POSIX-only; Windows offers only "spawn", and asking for
+        # fork there makes DataLoader raise before the first batch - after
+        # initialize_datasets has already built the segment cache and patch
+        # mmap pack, so the expensive prep is thrown away.
+        if "fork" in torch.multiprocessing.get_all_start_methods():
+            kwargs["multiprocessing_context"] = "fork"
         # Draws are procedural, so batch order carries no meaning; letting
         # finished batches overtake a straggling worker keeps one slow draw
         # from stalling the rank (and with DDP, every other rank).

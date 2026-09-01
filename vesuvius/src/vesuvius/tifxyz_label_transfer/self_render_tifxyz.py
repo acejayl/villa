@@ -1394,7 +1394,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         nearest_vertices=int(stage_report["nearest_vertices"]),
         index_max_distance=float(stage_report["max_distance"]),
     )
-    print("Building source→target surface correspondence...", flush=True)
+    print("Building source->target surface correspondence...", flush=True)
     mapped_rows, mapped_cols, _, mapped_valid = mapper.build_target_uv_map(
         target_surface,
         max_distance=float(stage_report["max_distance"]),

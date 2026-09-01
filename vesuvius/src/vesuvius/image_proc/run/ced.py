@@ -727,7 +727,7 @@ def main():
             # Process each sample
             for i, sample in enumerate(samples, 1):
                 print(f"\n[{i}/{len(samples)}] Processing {sample['desc']}...")
-                print(f"  Parameters: λ={sample['lambda']}, σ={sample['sigma']}, ρ={sample['rho']}")
+                print(f"  Parameters: lambda={sample['lambda']}, sigma={sample['sigma']}, rho={sample['rho']}")
                 
                 # Create config for this sample
                 sample_config = {
