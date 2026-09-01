@@ -309,7 +309,7 @@ def _list_chunks_local(array_url: str, sub_prefix: str, sep: str) -> List[str]:
     if not os.path.isdir(start):
         return results
 
-    prefix_depth = len(base.rstrip("/")) + 1  # strip "base/" from absolute paths
+    prefix_depth = len(base.rstrip("/\\")) + 1  # strip "base/" from absolute paths
     stack = [start]
     while stack:
         d = stack.pop()
@@ -319,7 +319,14 @@ def _list_chunks_local(array_url: str, sub_prefix: str, sep: str) -> List[str]:
                     if entry.is_dir(follow_symlinks=False):
                         stack.append(entry.path)
                     elif entry.is_file():
-                        rel = entry.path[prefix_depth:]
+                        # entry.path uses the OS separator, but these keys are
+                        # split on the zarr dimension_separator ("/") by the
+                        # caller. Without this, every key on Windows comes back
+                        # as "0\\1\\0", splits to one part instead of `rank`,
+                        # and is silently dropped.
+                        rel = entry.path[prefix_depth:].replace(os.sep, "/")
+                        if os.altsep:
+                            rel = rel.replace(os.altsep, "/")
                         results.append(rel)
         except FileNotFoundError:
             continue
