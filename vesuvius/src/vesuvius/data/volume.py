@@ -976,11 +976,21 @@ class Volume:
                 if self.verbose: print(f"  Cast {original_dtype} to np.float32 for normalization.")
 
         # 2. Apply Normalization Scheme
-        # Handle potential channel dimension (assume channels are dim 0 if present)
-        # Add temporary channel dim for 3D data (Z, Y, X) -> (1, Z, Y, X) for consistent logic
-        original_ndim = data_slice.ndim
-        has_channel_dim = original_ndim > 3  # Heuristic: assume >3D means channels exist at dim 0
-        if not has_channel_dim and original_ndim == 3:  # Add channel dim for 3D volumes
+        # Channels are dim 0 when present. Whether a read kept that axis cannot
+        # be inferred from the result's ndim: vol[z] on a (Z,Y,X) store and
+        # vol[:, z] on a (C,Z,Y,X) store both return 2D, and only the second has
+        # channels. Decide from the store and the index instead. Everything that
+        # is not a surviving channel axis is wrapped in a single pseudo-channel
+        # so the loops below normalize the read as one instance, which is what
+        # "computed per slice/volume instance" in the class docstring promises.
+        store_has_channels = store.ndim > 3
+        channel_axis_kept = (
+            store_has_channels
+            and len(coord_idx) > 0
+            and not isinstance(coord_idx[0], (int, np.integer))
+        )
+        added_channel_dim = not channel_axis_kept
+        if added_channel_dim:
             data_slice = data_slice[np.newaxis, ...]
             if self.verbose: print(f"  Added temporary channel dim for normalization: {data_slice.shape}")
 
@@ -1036,7 +1046,7 @@ class Volume:
             raise ValueError(f"Internal Error: Unknown normalization scheme '{self.normalization_scheme}' encountered.")
 
         # Remove temporary channel dimension if it was added
-        if not has_channel_dim and original_ndim == 3 and data_slice.ndim == 4:
+        if added_channel_dim:
             data_slice = data_slice[0, ...]
             if self.verbose: print(f"  Removed temporary channel dim: {data_slice.shape}")
 
