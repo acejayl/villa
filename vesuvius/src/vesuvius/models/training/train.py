@@ -1021,6 +1021,22 @@ class BaseTrainer:
                         raise ValueError(
                             f"Failed to create loss function '{loss_name}' for target '{task_name}': {str(e)}")
 
+            if (
+                not task_losses
+                and not deferred_losses
+                and self._should_include_target_in_loss(task_name)
+            ):
+                # Targets the training loop deliberately skips -
+                # is_unlabeled, *_skel, *_mask - are allowed to have no
+                # loss. Anything it will actually sum is not.
+                raise ValueError(
+                    f"Target '{task_name}' has no loss function. Set 'losses' or "
+                    "'loss_fn' on the target, or pick one with --loss. Training "
+                    "with none is not a no-op: the target's loss is a constant "
+                    "zero, so its head gets no gradient while the log shows a "
+                    "loss of 0."
+                )
+
             loss_fns[task_name] = task_losses
             if deferred_losses:
                 self._deferred_losses[task_name] = deferred_losses

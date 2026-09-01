@@ -55,6 +55,17 @@ class ConfigManager:
             info_dict = dict(target_info or {})
             if 'out_channels' not in info_dict and 'channels' not in info_dict:
                 info_dict['out_channels'] = 2
+            # A target with no "losses" list gets an empty one from _build_loss,
+            # and an empty one sums to a constant zero loss - no gradient, and a
+            # reported loss of 0 that reads as perfect convergence. Normalize the
+            # single-loss spellings here, the same way _apply_loss_overrides does
+            # when it restores them after a checkpoint load.
+            if 'losses' not in info_dict:
+                info_dict['losses'] = [{
+                    "name": info_dict.get('loss_fn') or self.selected_loss_function,
+                    "weight": 1.0,
+                    "kwargs": {},
+                }]
             self.targets[target_name] = info_dict
 
         # Load inference parameters directly
