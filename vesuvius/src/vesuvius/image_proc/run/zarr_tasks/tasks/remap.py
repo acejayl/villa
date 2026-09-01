@@ -16,7 +16,7 @@ import zarr
 
 from ..base import TaskConfig, ZarrTask, make_task_config
 from ..registry import register_task
-from ..utils import get_chunk_slices
+from ..utils import get_chunk_slices, input_compressor
 
 # Try to import fastremap for efficient remapping
 try:
@@ -211,7 +211,7 @@ class RemapTask(ZarrTask):
                     shape=input_arr.shape,
                     chunks=input_arr.chunks,
                     dtype=input_arr.dtype,
-                    compressor=input_arr.compressor,
+                    compressor=input_compressor(input_arr),
                 )
 
             # Generate and process work items for this level

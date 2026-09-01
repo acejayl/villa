@@ -15,6 +15,7 @@ import zarr
 from ..base import TaskConfig, ZarrTask, make_task_config
 from ..registry import register_task
 from ..utils import (
+    input_compressor,
     build_pyramid,
     create_level_dataset,
     get_chunk_coords,
@@ -120,7 +121,7 @@ class ThresholdTask(ZarrTask):
             input_z.shape,
             input_z.chunks,
             np.uint8,
-            input_z.compressor,
+            input_compressor(input_z),
         )
 
         self._input_shape = input_z.shape

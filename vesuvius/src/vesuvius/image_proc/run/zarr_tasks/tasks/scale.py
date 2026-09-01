@@ -15,6 +15,7 @@ import zarr
 from ..base import TaskConfig, ZarrTask, make_task_config
 from ..registry import register_task
 from ..utils import (
+    input_compressor,
     build_pyramid,
     create_level_dataset,
     get_chunk_coords,
@@ -148,7 +149,7 @@ class ScaleTask(ZarrTask):
             self._out_shape,
             self._out_chunks,
             input_z.dtype,
-            input_z.compressor,
+            input_compressor(input_z),
         )
 
     def generate_work_items(self) -> Iterable[Any]:
