@@ -1346,7 +1346,15 @@ class BaseTrainer:
         for task_name, task_config in self.mgr.targets.items():
             task_metrics = []
 
-            num_classes = task_config.get('num_classes', 2)
+            # Configs declare the head width as out_channels; nothing in the
+            # repo ever writes num_classes, so reading only that key pinned
+            # every metric to 2 classes while the loss supervised all of them.
+            # On a 3-class head that silently dropped class 2 from iou/dice and
+            # from connected components, and inflated the reported means.
+            num_classes = task_config.get('num_classes')
+            if num_classes is None:
+                num_classes = task_config.get('out_channels', 2)
+            num_classes = int(num_classes)
             target_ignore_value = None
             for alias in ("ignore_index", "ignore_label", "ignore_value"):
                 value = task_config.get(alias)
