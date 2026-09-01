@@ -408,7 +408,7 @@ def _init_worker(part_files, output_path, gaussian_map, patch_size, num_classes,
     })
 
 
-def process_chunk(chunk_info, chunk_patches, epsilon=1e-8):
+def process_chunk(chunk_info, chunk_patches):
     """
     Process a single chunk using worker-cached zarr stores.
 
@@ -418,7 +418,6 @@ def process_chunk(chunk_info, chunk_patches, epsilon=1e-8):
         chunk_info: Dictionary with chunk boundaries
         chunk_patches: Dict {part_id: [(patch_idx, z, y, x), ...]} precomputed
                        for this chunk (non-empty, intersecting patches only)
-        epsilon: Small value for numerical stability
     """
     part_files = _worker_state['part_files']
     gaussian_map = _worker_state['gaussian_map']
@@ -522,8 +521,13 @@ def process_chunk(chunk_info, chunk_patches, epsilon=1e-8):
 
         # Divide in place: voxels with weight==0 had no contributions so
         # chunk_logits is already 0 there, and `where=...` leaves them untouched.
+        # Nothing is added to the denominator. `where=` already excludes every
+        # zero-weight voxel, so an epsilon guards nothing and only biases the
+        # result: the Gaussian map's minimum is exp(-3*4^2/2) = 3.8e-11, which
+        # is far below a 1e-8 epsilon, so any voxel covered by a single patch
+        # far from its centre would be scaled by w/(w+eps) instead of averaged.
         weights_b = chunk_weights[np.newaxis, :, :, :]
-        np.divide(chunk_logits, weights_b + epsilon,
+        np.divide(chunk_logits, weights_b,
                   out=chunk_logits, where=weights_b > 0)
 
         finalize_config = _worker_state.get('finalize_config')
