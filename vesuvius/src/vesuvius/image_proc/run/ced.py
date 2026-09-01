@@ -29,6 +29,43 @@ except Exception:
     _HAVE_SKIMAGE = False
 
 
+_ZARR_V3 = int(zarr.__version__.split(".", 1)[0]) >= 3
+
+
+def _input_compressor(array):
+    """The input array's compressor, or None if it does not expose one.
+
+    Reading ``.compressor`` on a zarr-3 array raises **TypeError**, not
+    AttributeError, so ``hasattr(array, "compressor")`` does not guard it - the
+    TypeError travels straight through hasattr and out of the caller.
+    """
+    try:
+        return array.compressor
+    except (AttributeError, TypeError):
+        return None
+
+
+def _open_output_like(path, *, shape, chunks, dtype, compressor):
+    """Create the output array in the v2 format, on zarr 2 or zarr 3.
+
+    zarr 3 defaults new arrays to the v3 format, which rejects ``compressor``
+    outright ("compressor cannot be used for arrays with zarr_format 3"). Every
+    array this module reads and writes is v2, so ask for it explicitly rather
+    than dropping the input's compression.
+    """
+    kwargs = {
+        "mode": "w",
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "compressor": compressor,
+        "write_empty_chunks": False,
+    }
+    if _ZARR_V3:
+        return zarr.open(path, zarr_format=2, **kwargs)
+    return zarr.open(path, **kwargs)
+
+
 """
 CONFIGURATION PARAMETERS GUIDE
 
@@ -247,14 +284,12 @@ def launch_multi_gpu_processing(
     
     # Create output zarr with chunks=(1, height, width)
     print(f"Creating output zarr array: {output_path}")
-    zarr_out = zarr.open(
-        output_path, 
-        mode='w', 
-        shape=shape, 
+    zarr_out = _open_output_like(
+        output_path,
+        shape=shape,
         chunks=(1, shape[1], shape[2]),  # One chunk per z-slice
         dtype=dtype,
-        compressor=zarr_in.compressor if hasattr(zarr_in, 'compressor') else None,
-        write_empty_chunks=False
+        compressor=_input_compressor(zarr_in),
     )
     
     # Calculate chunk boundaries for each GPU
@@ -325,14 +360,12 @@ def process_zarr_array(input_path, output_path, config, batch_size=1):
     else:
         chunks = zarr_in.chunks if hasattr(zarr_in, 'chunks') else None
     
-    zarr_out = zarr.open(
-        output_path, 
-        mode='w', 
-        shape=shape, 
+    zarr_out = _open_output_like(
+        output_path,
+        shape=shape,
         chunks=chunks,
         dtype=dtype,
-        compressor=zarr_in.compressor if hasattr(zarr_in, 'compressor') else None,
-        write_empty_chunks=False
+        compressor=_input_compressor(zarr_in),
     )
     
     # Process each slice in batches
