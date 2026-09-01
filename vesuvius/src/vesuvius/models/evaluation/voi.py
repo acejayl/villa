@@ -47,17 +47,21 @@ class VOIMetric(BaseMetric):
         )
 
 
-def _bbox3d(mask: np.ndarray) -> Optional[Tuple[slice, slice, slice]]:
-    """Compute 3D bounding box of binary mask."""
-    assert mask.ndim == 3
+def _bbox_nd(mask: np.ndarray) -> Optional[Tuple[slice, ...]]:
+    """Compute the bounding box of a binary mask of any rank.
+
+    The trainer attaches VOIMetric to every target regardless of
+    dimensionality, so this is reached with 2D masks as well as 3D.
+    """
+    ndim = mask.ndim
     sls = []
-    for ax in range(3):
-        proj = mask.any(axis=tuple(i for i in range(3) if i != ax))
+    for ax in range(ndim):
+        proj = mask.any(axis=tuple(i for i in range(ndim) if i != ax))
         idx = np.flatnonzero(proj)
         if idx.size == 0:
             return None
         sls.append(slice(int(idx[0]), int(idx[-1]) + 1))
-    return (sls[0], sls[1], sls[2])
+    return tuple(sls)
 
 
 def _compute_voi_3d(
@@ -82,15 +86,13 @@ def _compute_voi_3d(
         }
 
     # Crop to union bounding box for speed
-    slc = _bbox3d(union)
+    slc = _bbox_nd(union)
     if slc is not None:
         crop_ratio = 0.7
         full_n = int(np.prod(gt_bin.shape, dtype=np.int64))
-        bbox_n = int(
-            (slc[0].stop - slc[0].start) *
-            (slc[1].stop - slc[1].start) *
-            (slc[2].stop - slc[2].start)
-        )
+        bbox_n = 1
+        for s in slc:
+            bbox_n *= (s.stop - s.start)
         use_crop = (bbox_n <= int(crop_ratio * full_n))
 
         if use_crop:
@@ -200,10 +202,20 @@ def compute_voi(
             if mask_np is not None and mask_np.ndim == 5 and mask_np.shape[1] == 1:
                 mask_np = mask_np.squeeze(1)
     elif gt_np.ndim == 4:
-        if gt_np.shape[1] == 1:
+        # Could be (batch, depth, height, width) or (batch, channels, height, width)
+        if gt_np.shape[1] == 1:  # (batch, 1, height, width) for 2D
             gt_np = gt_np.squeeze(1)
             if mask_np is not None and mask_np.ndim == 4 and mask_np.shape[1] == 1:
                 mask_np = mask_np.squeeze(1)
+        elif gt_np.shape[1] <= 10:  # Likely channels, reduce as iou_dice does
+            gt_np = np.argmax(gt_np, axis=1)
+            if mask_np is not None and mask_np.ndim == 4 and mask_np.shape[1] == 1:
+                mask_np = mask_np.squeeze(1)
+        # Otherwise assume it is already (batch, depth, height, width)
+    elif gt_np.ndim == 2:  # (height, width)
+        gt_np = gt_np[np.newaxis, ...]
+        if mask_np is not None and mask_np.ndim == 2:
+            mask_np = mask_np[np.newaxis, ...]
 
     if pred_np.ndim != gt_np.ndim:
         raise ValueError(
