@@ -344,9 +344,15 @@ def voxelize(xyz, band, ds, device):
 
 def load_patch_metas(patches_dir, band, scratch):
     cache = scratch / "patch_metas.json"
+    # The band belongs in the key: names below is filtered to patches that
+    # overlap it. Keying on patches_dir alone handed a rerun over a different
+    # --z-range the previous band's patch list, which is both missing the
+    # patches the new band needs and carrying ones it does not. rasterize_patches
+    # stamps the band for the same reason.
+    stamp = {"patches_dir": str(patches_dir), "band": [band.z_lo, band.z_hi]}
     if cache.exists():
         entries = json.loads(cache.read_text())
-        if entries.get("patches_dir") == str(patches_dir):
+        if all(entries.get(key) == value for key, value in stamp.items()):
             return entries["names"]
 
     def read_meta(entry):
@@ -367,8 +373,7 @@ def load_patch_metas(patches_dir, band, scratch):
             z_min, z_max = float(bbox[0][2]), float(bbox[1][2])
             if z_max >= band.z_lo and z_min < band.z_hi:
                 names.append(name)
-    _write_json_atomic(
-        cache, {"patches_dir": str(patches_dir), "names": names})
+    _write_json_atomic(cache, {**stamp, "names": names})
     return names
 
 
