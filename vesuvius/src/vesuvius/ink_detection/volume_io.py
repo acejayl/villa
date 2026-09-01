@@ -28,9 +28,13 @@ def _cache_snapshot(cache_dir: Path) -> list[tuple[int, int, Path]]:
             path = Path(directory) / filename
             try:
                 stat = path.stat(follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if not path.is_file():
+                if not path.is_file():
+                    continue
+            except OSError:
+                # A concurrent reader or writer can make a cache entry
+                # momentarily unstattable. On Windows that is PermissionError,
+                # not FileNotFoundError, so catching only the latter let a
+                # perfectly ordinary race abort the whole sweep.
                 continue
             snapshot.append((stat.st_mtime_ns, stat.st_size, path))
     snapshot.sort()
@@ -48,8 +52,17 @@ def _evict_to_watermark(
         try:
             path.unlink()
         except FileNotFoundError:
-            pass
-        total -= size
+            # Already gone: it is not occupying space either way.
+            total -= size
+        except OSError:
+            # Windows refuses to unlink a file another process has open, with
+            # PermissionError(13, 'Access is denied'). That is the normal state
+            # of a cache shared between workers, not an error - skip this entry
+            # and leave it for a later sweep. Its size stays counted, because
+            # it is still on disk.
+            continue
+        else:
+            total -= size
     return total
 
 
