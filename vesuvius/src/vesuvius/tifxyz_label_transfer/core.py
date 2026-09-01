@@ -188,12 +188,19 @@ class MappingStats:
     distance_sum: float = 0.0
     distance_min: float = math.inf
     distance_max: float = 0.0
-    _distance_samples: Optional[list[NDArray[np.float32]]] = None
+    _distance_samples: Optional[NDArray[np.float32]] = None
+    _distance_keys: Optional[NDArray[np.float64]] = None
     _distance_sample_count: int = 0
+    _distance_rng: Optional[np.random.Generator] = None
 
     def __post_init__(self) -> None:
         if self._distance_samples is None:
-            self._distance_samples = []
+            self._distance_samples = np.empty(0, dtype=np.float32)
+        if self._distance_keys is None:
+            self._distance_keys = np.empty(0, dtype=np.float64)
+        if self._distance_rng is None:
+            # Seeded so a rerun over the same tiles reports the same percentiles.
+            self._distance_rng = np.random.default_rng(0)
 
     def add(
         self,
@@ -214,18 +221,25 @@ class MappingStats:
         self.distance_min = min(self.distance_min, float(finite.min()))
         self.distance_max = max(self.distance_max, float(finite.max()))
 
+        # Reservoir sample by random key: give every distance a uniform key and
+        # keep the sample_limit smallest keys seen so far. That is a uniform
+        # sample of the whole stream, which simply stopping at the limit is not
+        # - add() runs once per tile off a thread pool, so a budget spent on the
+        # tiles that happened to finish first left the reported percentiles
+        # describing an arbitrary, run-to-run varying subset of the surface.
         assert self._distance_samples is not None
-        remaining = max(0, sample_limit - self._distance_sample_count)
-        if remaining:
-            if finite.size <= remaining:
-                self._distance_samples.append(finite.copy())
-                self._distance_sample_count += int(finite.size)
-            else:
-                indices = np.linspace(
-                    0, finite.size - 1, num=remaining, dtype=np.int64
-                )
-                self._distance_samples.append(finite[indices].copy())
-                self._distance_sample_count += int(remaining)
+        assert self._distance_keys is not None
+        assert self._distance_rng is not None
+        self._distance_sample_count += int(finite.size)
+        keys = self._distance_rng.random(finite.size)
+        merged_values = np.concatenate((self._distance_samples, finite))
+        merged_keys = np.concatenate((self._distance_keys, keys))
+        if merged_keys.size > sample_limit:
+            kept = np.argpartition(merged_keys, sample_limit)[:sample_limit]
+            merged_values = merged_values[kept]
+            merged_keys = merged_keys[kept]
+        self._distance_samples = np.ascontiguousarray(merged_values)
+        self._distance_keys = np.ascontiguousarray(merged_keys)
 
     def as_dict(self) -> dict:
         coverage = (
@@ -253,8 +267,8 @@ class MappingStats:
             ),
         }
         assert self._distance_samples is not None
-        if self._distance_samples:
-            samples = np.concatenate(self._distance_samples)
+        if self._distance_samples.size:
+            samples = self._distance_samples
             result["distance_p50"] = float(np.percentile(samples, 50))
             result["distance_p95"] = float(np.percentile(samples, 95))
             result["distance_p99"] = float(np.percentile(samples, 99))
