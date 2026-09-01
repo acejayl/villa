@@ -45,6 +45,7 @@ import os
 import shlex
 import shutil
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -1217,19 +1218,46 @@ class OmeZarrPyramidWriter:
                  **({"downsampling_method": "mean"} if level else {})})
         self._pool = ThreadPoolExecutor(max_workers=16)
         self._futures = []
+        # Chunks this writer has already emitted, and one lock per chunk. Levels
+        # 0 and 1 are written one upsampled tile at a time, so a chunk can be
+        # revisited (see _write_chunk).
+        self._written = set()
+        self._written_guard = threading.Lock()
+        self._chunk_locks = {}
+
+    def _lock_for(self, key):
+        with self._written_guard:
+            return self._chunk_locks.setdefault(key, threading.Lock())
 
     def _write_chunk(self, level, chunk_index, values):
         destination = (
             self.path / str(level)
             / str(chunk_index[0]) / str(chunk_index[1]) / str(chunk_index[2]))
         destination.parent.mkdir(parents=True, exist_ok=True)
-        payload = bytes(self.compressor.encode(
-            np.ascontiguousarray(values).tobytes()))
-        temporary = destination.with_name(
-            f".{destination.name}.tmp-{os.getpid()}")
-        with open(temporary, "wb") as stream:
-            stream.write(payload)
-        os.replace(temporary, destination)
+        key = (level, tuple(int(index) for index in chunk_index))
+        with self._lock_for(key):
+            # Levels 0 and 1 emit one block per upsampled tile, and a band whose
+            # z origin is not chunk aligned - make_band only guarantees 32, and
+            # a level-0 chunk is 128 - puts two z-adjacent tiles in the same
+            # chunk. Each block zero-pads the part of the chunk it does not
+            # cover, so writing the second one whole would erase the first one's
+            # rows. Merge over what this run already wrote instead; the two
+            # cover disjoint rows, and 0 is the invalid code, so keeping the
+            # non-zero side is exact and order independent.
+            if key in self._written:
+                existing = np.frombuffer(
+                    self.compressor.decode(destination.read_bytes()),
+                    dtype=np.uint16,
+                ).reshape(values.shape)
+                values = np.where(values == 0, existing, values)
+            payload = bytes(self.compressor.encode(
+                np.ascontiguousarray(values).tobytes()))
+            temporary = destination.with_name(
+                f".{destination.name}.tmp-{os.getpid()}")
+            with open(temporary, "wb") as stream:
+                stream.write(payload)
+            os.replace(temporary, destination)
+            self._written.add(key)
 
     def write_block(self, level, origin, values):
         """Write a uint16 block at ``origin`` (level voxels), splitting into
