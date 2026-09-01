@@ -126,6 +126,26 @@ def load_tif_3d(path: Path, allow_2d: bool = False) -> np.ndarray:
     return arr
 
 
+# Complementary (Jordan) connectivity pairs. Counting holes as b1 = b0 + b2 - chi
+# mixes a foreground Euler characteristic with a background cavity count, and that
+# is only consistent when the two connectivities are complementary. Pairing a
+# connectivity with itself is the digital-topology paradox: on a 5x5x5 shell whose
+# interior leaks to the outside through a single corner contact, (6, 6) reports one
+# handle and one cavity where the shape has neither, and (26, 26) returns b1 = -1.
+JORDAN_PAIRS = {(6, 26), (26, 6)}
+
+
+def check_connectivity_pair(fg_connectivity: int, bg_connectivity: int) -> None:
+    """Reject foreground/background connectivities that are not complementary."""
+    if (fg_connectivity, bg_connectivity) not in JORDAN_PAIRS:
+        raise ValueError(
+            f"fg/bg connectivity ({fg_connectivity}, {bg_connectivity}) is not a "
+            "complementary pair, so the reported hole and cavity counts would not "
+            "be topologically meaningful. Use one of "
+            f"{sorted(JORDAN_PAIRS)}."
+        )
+
+
 def _conn_to_skimage(conn: int, ndim: int) -> int:
     if ndim == 3:
         mapping = {6: 1, 18: 2, 26: 3}
@@ -183,6 +203,7 @@ def compute_component_topology(
     Returns (holes_b1, cavities_b2, euler_characteristic) for a single component mask.
     For 3D, uses b1 = b0 + b2 - chi, with b0=1.
     """
+    check_connectivity_pair(fg_connectivity, bg_connectivity)
     comp = comp.astype(bool)
     comp_pad = np.pad(comp, pad_width=1, mode="constant", constant_values=False)
 
@@ -505,10 +526,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--fg-value", type=int, default=1, help="Foreground value to analyze (default: 1)")
     ap.add_argument("--ignore-value", type=int, default=None,
                     help="Label value to ignore (treated as background).")
-    ap.add_argument("--fg-connectivity", type=int, default=6, choices=[6, 18, 26],
-                    help="Connectivity for FG components (default: 6)")
-    ap.add_argument("--bg-connectivity", type=int, default=6, choices=[6, 18, 26],
-                    help="Connectivity for BG cavities (default: 6)")
+    ap.add_argument("--fg-connectivity", type=int, default=6, choices=[6, 26],
+                    help="Connectivity for FG components (default: 6). 18 is not "
+                         "offered: the Euler number backends implement 6 and 26 only, "
+                         "and 18 has no unambiguous complement here.")
+    ap.add_argument("--bg-connectivity", type=int, default=26, choices=[6, 26],
+                    help="Connectivity for BG cavities (default: 26). Must be "
+                         "complementary to --fg-connectivity: 6/26 or 26/6.")
     ap.add_argument("--workers", type=int, default=0, help="Number of parallel workers (0=sequential)")
     ap.add_argument("--allow-2d", action="store_true", help="Allow 2D TIFFs; auto-add singleton Z.")
     ap.add_argument("--cpu", action="store_true",
@@ -542,6 +566,12 @@ def parse_args() -> argparse.Namespace:
     args = ap.parse_args()
     if args.images_dir is not None and args.out_dir is None:
         ap.error("--out-dir is required when --images-dir is given")
+    try:
+        check_connectivity_pair(
+            int(args.fg_connectivity), int(args.bg_connectivity)
+        )
+    except ValueError as exc:
+        ap.error(str(exc))
     return args
 
 

@@ -557,10 +557,11 @@ def parse_args() -> argparse.Namespace:
                     help="Foreground label value (default: 1).")
     ap.add_argument("--ignore-value", type=int, default=2,
                     help="Ignore label value (default: 2).")
-    ap.add_argument("--fg-connectivity", type=int, default=6, choices=[6, 18, 26],
+    ap.add_argument("--fg-connectivity", type=int, default=6, choices=[6, 26],
                     help="FG connectivity for hole detection (default: 6).")
-    ap.add_argument("--bg-connectivity", type=int, default=6, choices=[6, 18, 26],
-                    help="BG connectivity for hole detection (default: 6).")
+    ap.add_argument("--bg-connectivity", type=int, default=26, choices=[6, 26],
+                    help="BG connectivity for hole detection (default: 26). Must be "
+                         "complementary to --fg-connectivity.")
     return ap.parse_args()
 
 
