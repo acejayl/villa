@@ -796,19 +796,23 @@ class Inferer():
         # Use normalization from model checkpoint if available, otherwise use command line arg
         normalization_scheme = self.model_normalization_scheme or self.normalization_scheme
         
-        # Handle train.py model normalization scheme mapping
+        # Handle train.py model normalization scheme mapping.
+        #
+        # train.py's 'zscore' is always a per-instance z-score:
+        # ZScoreNormalization.run calls normalize_zscore(image, mask=...) and
+        # never passes intensityproperties, so the mean and std come from the
+        # patch itself. Only CTNormalization consumes the global statistics.
+        #
+        # Training still computes and stores intensity properties for 'zscore'
+        # (see zarr_dataset, which initializes them for 'zscore' and 'ct'), so
+        # a zscore checkpoint almost always carries a mean and std. Switching to
+        # global_zscore on their mere presence fed the model dataset-level
+        # statistics it was never trained on - a silent train/inference
+        # normalization mismatch on what is the default scheme.
         if self.model_normalization_scheme and normalization_scheme == 'zscore':
-            # This is a train.py model with 'zscore' normalization
-            if self.model_intensity_properties and 'mean' in self.model_intensity_properties and 'std' in self.model_intensity_properties:
-                # We have intensity properties, use global_zscore
-                normalization_scheme = 'global_zscore'
-                if self.verbose:
-                    print("Mapped 'zscore' to 'global_zscore' (intensity properties available)")
-            else:
-                # No intensity properties, use instance_zscore
-                normalization_scheme = 'instance_zscore'
-                if self.verbose:
-                    print("Mapped 'zscore' to 'instance_zscore' (no intensity properties)")
+            normalization_scheme = 'instance_zscore'
+            if self.verbose:
+                print("Mapped 'zscore' to 'instance_zscore' (train.py z-scores per instance)")
         
         # Extract global normalization parameters if using global_zscore
         global_mean = None
