@@ -18,6 +18,7 @@ import zarr
 
 from ..base import TaskConfig, ZarrTask, make_task_config
 from ..registry import register_task
+from ..utils import input_compressor
 
 
 @dataclass
@@ -278,7 +279,7 @@ class ResizeTask(ZarrTask):
             )
 
             # Get compression and chunks from input
-            compressor = input_data.compressor
+            compressor = input_compressor(input_data)
             input_chunks = input_data.chunks
 
             # Use input chunks, but cap at target shape

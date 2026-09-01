@@ -20,6 +20,8 @@ from tqdm import tqdm
 
 from ..base import TaskConfig, ZarrTask, make_task_config
 from ..registry import register_task
+from ..utils import create_group_array
+from vesuvius.label_zarr import open_v2_group
 from ..utils import get_chunk_slices
 
 
@@ -288,15 +290,15 @@ class MergeTask(ZarrTask):
         output_path = Path(self.config.output_zarr)
         print(f"\nCreating output zarr at {output_path}")
 
-        root = zarr.open(str(output_path), mode="w")
-        root.create_dataset(
+        root = open_v2_group(output_path)
+        create_group_array(
+            root,
             "0",
             shape=self._shape,
             chunks=self._chunks,
             dtype=self._dtype,
             compressor=self._compressor,
             fill_value=0,
-            write_empty_chunks=False,
         )
 
     def generate_work_items(self) -> Iterable[Any]:
@@ -337,7 +339,8 @@ class MergeTask(ZarrTask):
             print(f"Level {level}: {prev_shape} -> {out_shape}")
 
             # Create output array
-            root.create_dataset(
+            create_group_array(
+                root,
                 str(level),
                 shape=out_shape,
                 chunks=self._chunks,

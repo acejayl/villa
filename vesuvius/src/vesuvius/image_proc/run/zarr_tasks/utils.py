@@ -78,6 +78,83 @@ def get_chunk_slices(
     return chunk_slices
 
 
+_ZARR_V3 = int(zarr.__version__.split(".", 1)[0]) >= 3
+
+
+def input_compressor(array):
+    """The compressor of an input array, or None if it does not have one.
+
+    Reading ``.compressor`` on a Zarr-format-3 array raises **TypeError**, not
+    AttributeError, so ``hasattr(array, "compressor")`` does not guard it - the
+    TypeError propagates straight through hasattr.
+    """
+    try:
+        return array.compressor
+    except (AttributeError, TypeError):
+        return None
+
+
+def v2_dimension_separator(path, default="."):
+    """The chunk-key separator an existing v2 array on disk uses.
+
+    Read from .zarray rather than from an opened array, because the attribute
+    that carries it differs between zarr majors. A replacement array has to keep
+    whatever the original used, or the store's chunk keys silently change shape.
+    """
+    zarray = Path(path) / ".zarray"
+    try:
+        return json.loads(zarray.read_text()).get("dimension_separator", default)
+    except (OSError, ValueError):
+        return default
+
+
+def create_v2_array_at(path, *, shape, chunks, dtype, compressor,
+                       fill_value=None, dimension_separator="."):
+    """Create one standalone array at ``path`` in the v2 format, on zarr 2 or 3.
+
+    zarr 3's default is the v3 format, which rejects ``compressor``. Everything
+    this package writes is v2, so ask for it explicitly.
+
+    ``dimension_separator`` is explicit and defaults to zarr's own ".", because
+    this is used to build replacements for existing arrays: pass the original's
+    separator or the store's chunk keys change under the caller.
+    """
+    kwargs = {
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "compressor": compressor,
+        "mode": "w",
+        "dimension_separator": dimension_separator,
+    }
+    if fill_value is not None:
+        kwargs["fill_value"] = fill_value
+    if _ZARR_V3:
+        return zarr.open(str(path), zarr_format=2, **kwargs)
+    return zarr.open(str(path), **kwargs)
+
+
+def create_group_array(group, name, *, shape, chunks, dtype, compressor,
+                       fill_value=0, overwrite=False):
+    """Create one array inside an open group, on zarr 2 or zarr 3.
+
+    Group.create_dataset is zarr 2 only; zarr 3 replaced it with create_array.
+    """
+    common = {
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "compressor": compressor,
+        "fill_value": fill_value,
+    }
+    if _ZARR_V3:
+        return group.create_array(
+            name, **common, overwrite=overwrite,
+            config={"write_empty_chunks": False})
+    return group.create_dataset(
+        name, **common, overwrite=overwrite, write_empty_chunks=False)
+
+
 def create_level_dataset(
     root_group_path: str,
     level_name: str,
@@ -112,17 +189,28 @@ def create_level_dataset(
     if overwrite and level_path.exists():
         shutil.rmtree(level_path)
 
+    common = {
+        "shape": shape,
+        "chunks": chunks,
+        "dtype": dtype,
+        "compressor": compressor,
+        "mode": "w",
+        "fill_value": 0,
+    }
+    if _ZARR_V3:
+        # zarr 3 removed NestedDirectoryStore. Ask for the v2 format the
+        # .zgroup above already declares, and get the same nested chunk keys
+        # from dimension_separator. The on-disk result is byte-for-byte the
+        # layout the zarr 2 path produced.
+        return zarr.open(
+            store=str(level_path),
+            zarr_format=2,
+            dimension_separator="/",
+            config={"write_empty_chunks": False},
+            **common,
+        )
     store = zarr.NestedDirectoryStore(str(level_path))
-    return zarr.open(
-        store=store,
-        shape=shape,
-        chunks=chunks,
-        dtype=dtype,
-        compressor=compressor,
-        mode="w",
-        write_empty_chunks=False,
-        fill_value=0,
-    )
+    return zarr.open(store=store, write_empty_chunks=False, **common)
 
 
 def write_multiscales_metadata(
@@ -228,7 +316,7 @@ def build_pyramid(
             out_shape,
             out_chunks,
             in_z.dtype,
-            in_z.compressor,
+            input_compressor(in_z),
         )
 
         out_chunk_coords = get_chunk_coords(out_shape, out_chunks)

@@ -24,6 +24,8 @@ from ..registry import register_task
 from ..utils import (
     build_pyramid,
     create_level_dataset,
+    create_v2_array_at,
+    v2_dimension_separator,
     delete_chunk_file,
     get_chunk_coords,
     write_multiscales_metadata,
@@ -198,13 +200,27 @@ class RecompressTask(ZarrTask):
             print(f"  Shape: {read_z.shape}, Chunks: {read_z.chunks}")
 
             # Create temp zarr with new compressor
-            temp_z = zarr.open(
+            # The replacement must keep the source's format. Writing a v2
+            # array back into a v3 group leaves a store whose group metadata
+            # and array metadata disagree, and the level then cannot be opened
+            # at all - worse than refusing.
+            source_format = getattr(
+                getattr(read_z, "metadata", None), "zarr_format", 2)
+            if source_format != 2:
+                raise NotImplementedError(
+                    f"{level_path} is a zarr v{source_format} array. Recompression "
+                    "is expressed with a numcodecs compressor, which only applies "
+                    "to v2 arrays; recompressing a v3 array would need a v3 codec "
+                    "pipeline. Convert the store to v2 first, or recompress to a "
+                    "new output instead of in place."
+                )
+            temp_z = create_v2_array_at(
                 temp_path,
-                mode="w",
                 shape=read_z.shape,
                 chunks=read_z.chunks,
                 dtype=read_z.dtype,
                 compressor=self._compressor,
+                dimension_separator=v2_dimension_separator(level_path),
             )
 
             # Copy .zattrs if it exists
