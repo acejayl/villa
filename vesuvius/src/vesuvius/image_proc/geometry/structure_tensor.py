@@ -49,10 +49,16 @@ def _get_gaussian_kernel_2d(device: torch.device, dtype: torch.dtype, sigma: flo
     return kernel, radius
 
 
-@lru_cache(maxsize=None)
-def _get_pavel_kernels_3d(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _pavel_taps(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    """Pavel's 9-tap derivative stencil (/96) and 5-tap smoothing stencil (/16)."""
     d = torch.tensor([2.0, 1.0, -16.0, -27.0, 0.0, 27.0, 16.0, -1.0, -2.0], device=device, dtype=dtype)
     s = torch.tensor([1.0, 4.0, 6.0, 4.0, 1.0], device=device, dtype=dtype)
+    return d, s
+
+
+@lru_cache(maxsize=None)
+def _get_pavel_kernels_3d(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    d, s = _pavel_taps(device, dtype)
 
     kz = (d.view(9, 1, 1) * s.view(1, 5, 1) * s.view(1, 1, 5)) / (96 * 16 * 16)
     ky = (s.view(5, 1, 1) * d.view(1, 9, 1) * s.view(1, 1, 5)) / (96 * 16 * 16)
@@ -67,11 +73,20 @@ def _get_pavel_kernels_3d(device: torch.device, dtype: torch.dtype) -> tuple[tor
 
 @lru_cache(maxsize=None)
 def _get_pavel_kernels_2d(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
-    kz3d, ky3d, kx3d = _get_pavel_kernels_3d(device, dtype)
-    # slice the central plane along the orthogonal dimension to obtain 2D kernels
-    ky2d = ky3d[0, 0, 2, :, :].unsqueeze(0).unsqueeze(0).contiguous()
-    kx2d = kx3d[0, 0, 2, :, :].unsqueeze(0).unsqueeze(0).contiguous()
-    return ky2d, kx2d
+    # Build the 2D kernels from the taps directly. Slicing the central plane out
+    # of the 3D kernels does not give the 2D kernel: the plane carries the
+    # leftover smoothing weight s[2] = 6 while still being divided by the second
+    # 16, so it comes out 6/16 = 0.375x too small and every tensor component
+    # 0.140625x too small.
+    d, s = _pavel_taps(device, dtype)
+
+    ky2d = (d.view(9, 1) * s.view(1, 5)) / (96 * 16)
+    kx2d = (s.view(5, 1) * d.view(1, 9)) / (96 * 16)
+
+    return (
+        ky2d.unsqueeze(0).unsqueeze(0).contiguous(),
+        kx2d.unsqueeze(0).unsqueeze(0).contiguous(),
+    )
 
 
 def _ensure_tensor(data: torch.Tensor | np.ndarray, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
