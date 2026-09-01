@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Optional, Union
 
@@ -16,6 +18,55 @@ from .types import Tifxyz
 from .upsampling import compute_grid_bounds
 
 logger = logging.getLogger(__name__)
+
+# Files this writer produces and rewrites on every call. Everything else in a
+# tifxyz directory belongs to the caller - label images and the extra channels
+# written by write_extra_channel, both of which the reader enumerates as
+# Tifxyz._labels - and is carried across an overwrite.
+_MANAGED_FILENAMES = frozenset({"x.tif", "y.tif", "z.tif", "mask.tif", "meta.json"})
+
+
+def _carry_over_unmanaged_files(src: Path, dst: Path) -> None:
+    """Copy files this writer does not manage from ``src`` into ``dst``.
+
+    An overwrite rewrites only the managed files, so without this the round
+    trip ``read_tifxyz`` -> edit -> ``write_tifxyz(overwrite=True)`` would
+    silently discard every label image and extra channel in the segment.
+    """
+    if not src.is_dir():
+        return
+
+    for entry in src.iterdir():
+        if entry.name in _MANAGED_FILENAMES:
+            continue
+        target = dst / entry.name
+        if target.exists():
+            continue
+        if entry.is_dir():
+            shutil.copytree(entry, target)
+        else:
+            shutil.copy2(entry, target)
+
+
+def _replace_directory(new_dir: Path, dest: Path) -> None:
+    """Replace ``dest`` with ``new_dir`` without ever leaving ``dest`` missing.
+
+    ``dest`` is renamed aside first and only removed once the replacement is in
+    place, so a failure at any step leaves either the original or the new
+    directory at ``dest``. Deleting ``dest`` first and then moving the
+    replacement in has no such guarantee: if the delete fails part-way the
+    destination is already destroyed while the replacement is still elsewhere.
+    """
+    aside = dest.with_name(f".{dest.name}.tifxyz_old_{uuid.uuid4().hex[:8]}")
+
+    os.replace(dest, aside)
+    try:
+        os.replace(new_dir, dest)
+    except Exception:
+        os.replace(aside, dest)
+        raise
+
+    shutil.rmtree(aside, ignore_errors=True)
 
 
 def write_tifxyz(
@@ -260,6 +311,7 @@ class TifxyzWriter:
         """
         # Create temp directory for atomic write
         temp_dir = None
+        original_path = self.path
         use_atomic = self.path.exists() and self.overwrite
 
         if use_atomic:
@@ -267,7 +319,6 @@ class TifxyzWriter:
                 prefix=".tifxyz_tmp_",
                 dir=self.path.parent,
             )
-            original_path = self.path
             self.path = Path(temp_dir)
         else:
             self._ensure_directory()
@@ -292,9 +343,24 @@ class TifxyzWriter:
 
             # Atomic move if using temp directory
             if use_atomic and temp_dir:
-                # Remove old directory and rename temp to final
-                shutil.rmtree(original_path)
-                shutil.move(str(self.path), str(original_path))
+                # Keep the caller's label images and extra channels: only the
+                # managed files have been rewritten above.
+                _carry_over_unmanaged_files(original_path, self.path)
+
+                try:
+                    _replace_directory(self.path, original_path)
+                except Exception as exc:
+                    # The existing surface is still intact, but the temp
+                    # directory now holds the only copy of the surface just
+                    # written, so do not delete it - report where it is.
+                    kept, temp_dir = temp_dir, None
+                    raise RuntimeError(
+                        f"Could not replace {original_path}: {exc}. The existing "
+                        f"surface has been left unchanged and the newly written "
+                        f"surface is at {kept}."
+                    ) from exc
+
+                temp_dir = None  # ownership handed to original_path
                 self.path = original_path
 
             logger.info(f"Wrote tifxyz surface to {self.path}")
