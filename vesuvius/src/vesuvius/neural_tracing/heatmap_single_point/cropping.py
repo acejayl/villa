@@ -20,9 +20,15 @@ def safe_crop_with_padding(tensor, min_corner, crop_size):
     # Get tensor spatial shape (last 3 dims before any trailing dimensions)
     spatial_shape = torch.tensor(tensor.shape[1:4], device=min_corner.device, dtype=min_corner.dtype)
 
-    # Clamp to tensor bounds
-    actual_min = torch.maximum(min_corner, torch.zeros_like(min_corner))
-    actual_max = torch.minimum(max_corner, spatial_shape.unsqueeze(0).expand_as(actual_min))
+    # Clamp both bounds into [0, spatial_shape]. Clamping only one side leaves
+    # actual_max negative when the window lies entirely below the volume, and a
+    # negative Python slice endpoint selects real voxels from the far end of the
+    # tensor instead of an empty slice.
+    bounds = spatial_shape.unsqueeze(0).expand_as(min_corner)
+    zeros = torch.zeros_like(min_corner)
+    actual_min = torch.minimum(torch.maximum(min_corner, zeros), bounds)
+    actual_max = torch.minimum(torch.maximum(max_corner, zeros), bounds)
+    actual_max = torch.maximum(actual_max, actual_min)
 
     # Extract valid portion and pad if needed
     crops = []
@@ -34,9 +40,15 @@ def safe_crop_with_padding(tensor, min_corner, crop_size):
             actual_min[iib, 2].int().item() : actual_max[iib, 2].int().item()
         ]
 
-        # Pad if needed
-        pad_before = (actual_min[iib] - min_corner[iib]).int()
-        pad_after = (max_corner[iib] - actual_max[iib]).int()
+        # Pad if needed. Derive the padding from how much real data was taken
+        # rather than from the unclamped corners, so the result is always
+        # exactly crop_size along each spatial axis even when the requested
+        # window does not intersect the volume at all.
+        extent = (actual_max[iib] - actual_min[iib]).int()
+        pad_before = torch.clamp(
+            (actual_min[iib] - min_corner[iib]).int(), min=0, max=crop_size_int
+        )
+        pad_after = crop_size_int - extent - pad_before
 
         if torch.any(pad_before > 0) or torch.any(pad_after > 0):
             # F.pad expects padding in reverse order of dimensions (last dim first)
