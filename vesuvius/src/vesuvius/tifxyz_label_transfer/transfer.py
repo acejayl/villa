@@ -799,6 +799,12 @@ def _single_namespace_from_pipeline(
         distance_output=None,
         report_output=None,
         ignore_tifxyz_mask=args.ignore_tifxyz_mask,
+        # Both subcommands accept these, and each stage reads them off its own
+        # namespace with a getattr default - so leaving them out here did not
+        # fail, it silently fell back to "auto" and streaming no matter what the
+        # pipeline invocation asked for.
+        rasterizer=getattr(args, "rasterizer", "auto"),
+        no_stream_output=getattr(args, "no_stream_output", False),
         dry_run=args.dry_run,
         overwrite=args.overwrite,
     )
